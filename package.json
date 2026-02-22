@@ -26,6 +26,14 @@
   ],
   "author": "Tu Nombre",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EremesNG/kendo-angular-unofficial-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/EremesNG/kendo-angular-unofficial-mcp/issues"
+  },
+  "homepage": "https://github.com/EremesNG/kendo-angular-unofficial-mcp#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.1",
     "cheerio": "^1.0.0-rc.12",
