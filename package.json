@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "An open-source MCP server to query the Kendo UI for Angular documentation.",
   "main": "dist/index.js",
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "bin": {
     "kendo-angular-unofficial-mcp": "./dist/index.js"
