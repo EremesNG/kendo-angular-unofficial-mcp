@@ -300,7 +300,7 @@ server.tool(
             }
             
             if (!articleHtml) {
-                throw new Error("Could not find the main content of the article.");
+                return { content: [{ type: "text", text: "Error: Could not find the main content of the article." }], isError: true };
             }
             
             const markdown = turndownService.turndown(articleHtml);
