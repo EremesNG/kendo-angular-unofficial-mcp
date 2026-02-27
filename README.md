@@ -1,7 +1,7 @@
 
 # Kendo UI for Angular - Unofficial MCP Server
 
-A free, open-source **Model Context Protocol (MCP)** server that allows AI assistants (like Claude, Roo Code, and Cline) to browse, search, and extract code examples directly from the public [Kendo UI for Angular documentation](https://www.telerik.com/kendo-angular-ui/components/ "null").
+A free, open-source **Model Context Protocol (MCP)** server that allows AI assistants (like Claude, Roo Code, and Cline) to browse, search, and extract code examples directly from the public [Kendo UI for Angular documentation](https://www.telerik.com/kendo-angular-ui/components/).
 
 This project serves as a community-driven, accessible alternative to official premium MCPs, enabling developers to harness the power of LLMs with Kendo UI without requiring a subscription for the documentation integration.
 
@@ -9,9 +9,11 @@ This project serves as a community-driven, accessible alternative to official pr
 
 -   🚀 **Zero Configuration:** Works via standard input/output (`stdio`), meaning no network ports or complex setups are required.
 
--   🧠 **Extremely Token-Optimized:** Utilizes an advanced tree-grouping algorithm to compress component indexes (URLs and slugs). This reduces LLM context window consumption by up to **85%** compared to standard JSON responses, keeping responses lightning-fast.
+-   🧠 **Extremely Token-Optimized:** Utilizes an advanced tree-grouping algorithm to compress component indexes. Shared data files in demos are automatically truncated to type definitions + a single sample record, reducing token consumption by up to **91%** compared to raw output.
 
--   🧹 **Smart Scraping:** Specifically tailored to parse Telerik's Gatsby-based documentation site. It strips cookie banners, sidebars, scripts, and TOCs, feeding only the relevant Markdown (APIs and code blocks) to the LLM.
+-   🔬 **AST-Based Parsing:** Reads documentation directly from Gatsby's `page-data.json` AST instead of scraping rendered HTML. This produces cleaner Markdown, eliminates CSS selector fragility, and reduces the fetch payload significantly. Falls back to HTML scraping with Cheerio if the AST is unavailable.
+
+-   💻 **Live Demo Code Extraction:** Automatically discovers demo examples embedded in documentation pages and exposes their source code. The AI can fetch real, runnable Angular code from any documented feature.
 
 -   ⚡ **In-Memory Caching:** Prevents rate-limiting and speeds up AI responses by caching fetched documentation for 24 hours.
 
@@ -20,16 +22,17 @@ This project serves as a community-driven, accessible alternative to official pr
 
 ## Available Tools
 
-This server exposes four highly specialized tools to the AI:
+This server exposes five specialized tools to the AI:
 
-1.  `list_kendo_components`: Scrapes the main hub to get a list of all available Kendo Angular components (e.g., Grid, Buttons, Dropdowns).
+1.  `list_kendo_components` — Lists all available Kendo Angular components (e.g., Grid, Buttons, Dropdowns).
 
-2.  `list_component_topics`: Given a component ID, retrieves its documentation index/topics (e.g., Data Binding, Filtering, Editing). It explicitly filters out deep API references to keep the context clean.
+2.  `list_component_topics` — Given a component ID, retrieves its documentation index/topics (e.g., Data Binding, Filtering, Editing). Filters out deep API references to keep context clean.
 
-3.  `list_component_api`: A dedicated tool to retrieve deep API references for a component. Useful when the LLM needs to know the exact `@Input()`, `@Output()`, classes, directives, or interfaces of a specific module.
+3.  `list_component_api` — Retrieves deep API references for a component: `@Input()`, `@Output()`, classes, directives, and interfaces.
 
-4.  `read_kendo_doc`: Reads a specific documentation article, converting the HTML payload into clean, LLM-readable Markdown.
+4.  `read_kendo_doc` — Reads a specific documentation article and returns it as clean Markdown. Includes a list of available demo examples at the end that can be fetched with `read_demo_source`.
 
+5.  `read_demo_source` — Fetches the source code files for a specific demo example. Returns the full component code and intelligently truncates large shared data files to their type definitions + one sample record.
 
 ## Usage with Claude Desktop
 
@@ -92,7 +95,7 @@ If you want to contribute, modify the scraping logic, or run it locally from sou
 1.  **Clone the repository:**
 
     ```shell
-    git clone [https://github.com/yourusername/kendo-angular-unofficial-mcp.git](https://github.com/yourusername/kendo-angular-unofficial-mcp.git)
+    git clone https://github.com/EremesNG/kendo-angular-unofficial-mcp.git
     cd kendo-angular-unofficial-mcp
     
     ```
@@ -138,6 +141,7 @@ Once connected, you can ask your AI assistant things like:
 
 -   _"Use the Kendo API tool to check what @Input properties are available for the `<kendo-grid-column>` component."_
 
+-   _"Read the Grid filtering docs and fetch the demo source code so I can see a working example."_
 
 ## Disclaimer
 
