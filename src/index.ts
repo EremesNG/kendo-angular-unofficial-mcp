@@ -442,12 +442,26 @@ server.tool(
                 return { content: [{ type: "text", text: "No source files found for this demo." }] };
             }
 
+            const SHARED_MAX_LINES = 80;
+
             // Fetch all source files in parallel
             const fileContents = await Promise.all(
                 files.map(async (file: any) => {
                     try {
                         const contentUrl = `${DEMOS_BASE_URL}/${file.contentUrl}`;
                         const content = await fetchHtml(contentUrl);
+                        const isShared = file.contentUrl.startsWith("shared/");
+
+                        // Shared data files (e.g., mock datasets) are truncated to save tokens.
+                        // Types/interfaces are preserved; only bulk sample data is trimmed.
+                        if (isShared) {
+                            const lines = content.split('\n');
+                            if (lines.length > SHARED_MAX_LINES) {
+                                const truncated = lines.slice(0, SHARED_MAX_LINES).join('\n');
+                                return `=== ${file.name} [shared, truncated] ===\n${truncated}\n// ... ${lines.length - SHARED_MAX_LINES} more lines of sample data`;
+                            }
+                        }
+
                         return `=== ${file.name} ===\n${content}`;
                     } catch {
                         return `=== ${file.name} ===\n[Error fetching file]`;
