@@ -7,6 +7,8 @@ import * as cheerio from "cheerio";
 import TurndownService from "turndown";
 
 const BASE_URL = "https://www.telerik.com/kendo-angular-ui/components";
+const DEMOS_BASE_URL = "https://demos.telerik.com/kendo-angular-ui/demos";
+const PAGE_DATA_BASE_URL = `${BASE_URL}/page-data`;
 
 // Initialize Turndown to convert HTML to Markdown
 const turndownService = new TurndownService({
@@ -33,6 +35,89 @@ async function fetchHtml(url: string): Promise<string> {
     const html = await response.text();
     cache.set(url, { data: html, timestamp: Date.now() });
     return html;
+}
+
+function extractDemoMetaurls(node: any): string[] {
+    const metaurls: string[] = [];
+    function walk(n: any): void {
+        if (n && n.tagName === "demo" && n.properties?.metaurl) {
+            const url = n.properties.metaurl as string;
+            if (!metaurls.includes(url)) {
+                metaurls.push(url);
+            }
+        }
+        if (n?.children && Array.isArray(n.children)) {
+            for (const child of n.children) {
+                walk(child);
+            }
+        }
+    }
+    walk(node);
+    return metaurls;
+}
+
+// --- AST-to-HTML conversion for Gatsby page-data.json ---
+const SKIP_TAGS = new Set(["ctapanelsmall", "gitcommithistory", "demo"]);
+const PASSTHROUGH_TAGS = new Set([
+    "codeblock", "row", "column",
+    "componenttitle", "componentdescription", "span",
+]);
+const VOID_TAGS = new Set(["br", "hr", "img", "input"]);
+
+function escapeHtml(text: string): string {
+    return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+}
+
+function astToHtml(node: any): string {
+    if (!node) return "";
+    if (node.type === "text") return escapeHtml(node.value || "");
+    if (node.type === "root") return (node.children || []).map((c: any) => astToHtml(c)).join("");
+    if (node.type !== "element") return "";
+
+    const tag = node.tagName as string;
+    if (SKIP_TAGS.has(tag)) return "";
+
+    const childrenHtml = (node.children || []).map((c: any) => astToHtml(c)).join("");
+    if (PASSTHROUGH_TAGS.has(tag)) return childrenHtml;
+
+    // Custom Gatsby tile component → render as link
+    if (tag === "component") {
+        const href = node.properties?.href;
+        return href ? `<p><a href="${escapeHtml(href)}">${childrenHtml}</a></p>` : childrenHtml;
+    }
+
+    // Anchor links: strip in-page # refs (not useful for LLM consumption)
+    if (tag === "a") {
+        const href = node.properties?.href || "";
+        if (typeof href === "string" && href.startsWith("#")) return childrenHtml;
+        return `<a href="${escapeHtml(String(href))}">${childrenHtml}</a>`;
+    }
+
+    // Code: preserve language class for fenced code blocks
+    if (tag === "code") {
+        const classes = node.properties?.className;
+        if (Array.isArray(classes)) {
+            const langClass = classes.find((c: string) => typeof c === "string" && c.startsWith("language-"));
+            if (langClass) return `<code class="${langClass}">${childrenHtml}</code>`;
+        }
+        return `<code>${childrenHtml}</code>`;
+    }
+
+    // Image: preserve src and alt
+    if (tag === "img") {
+        const src = node.properties?.src ? ` src="${escapeHtml(String(node.properties.src))}"` : "";
+        const alt = node.properties?.alt ? ` alt="${escapeHtml(String(node.properties.alt))}"` : "";
+        return `<img${src}${alt}>`;
+    }
+
+    if (VOID_TAGS.has(tag)) return `<${tag}>`;
+
+    // All other standard HTML elements: render without attributes (cleaner for turndown)
+    return `<${tag}>${childrenHtml}</${tag}>`;
 }
 
 // 1. Initialize the MCP server using the high-level API
@@ -275,7 +360,7 @@ server.tool(
 
 server.tool(
     "read_kendo_doc",
-    "Reads a specific Kendo UI documentation article and returns it in Markdown format. Useful for reading code examples and APIs.",
+    "Reads a specific Kendo UI documentation article and returns it in Markdown format. Includes a list of available demo examples at the end. Use read_demo_source to fetch demo source code.",
     {
         path: z.string().describe("The relative path of the article (e.g., '/grid/data-binding/basics'). Remember to include the component prefix if you extracted it from a grouped list.")
     },
@@ -283,35 +368,98 @@ server.tool(
         try {
             const cleanPath = path.startsWith("/") ? path : `/${path}`;
             const targetUrl = `${BASE_URL}${cleanPath}`;
-            
-            const html = await fetchHtml(targetUrl);
-            const $ = cheerio.load(html);
-            
-            // Exhaustive DOM cleaning to avoid sending "garbage" to the LLM
-            // Remove left sidebar, right table of contents (TOC), scripts, styles, and widgets
-            $("nav, header, footer, aside, .kd-sidebar, .page-toc, #TableOfContents, .toc-container, .feedback-panel, .edit-page, script, style, noscript, svg").remove();
-            
-            // Search for the most common Gatsby/Telerik selectors for main content
-            let articleHtml = $("article").html() || $("main").html() || $(".kd-article").html() || $(".markdown-section").html();
-            
-            if (!articleHtml) {
-                // Generic fallback if no semantic container is found
-                articleHtml = $("body").html();
+
+            let markdown = "";
+            let demoSection = "";
+
+            // Primary: Gatsby page-data.json (single fetch, clean AST, no HTML scraping)
+            try {
+                const pageDataUrl = `${PAGE_DATA_BASE_URL}${cleanPath}/page-data.json`;
+                const pageDataRaw = await fetchHtml(pageDataUrl);
+                const pageData = JSON.parse(pageDataRaw);
+                const htmlAst = pageData?.result?.data?.markdownRemark?.htmlAst;
+
+                if (htmlAst) {
+                    const cleanHtml = astToHtml(htmlAst);
+                    markdown = turndownService.turndown(cleanHtml);
+
+                    // Extract demos from the same AST (no extra fetch needed)
+                    const demoMetaurls = extractDemoMetaurls(htmlAst);
+                    if (demoMetaurls.length > 0) {
+                        demoSection = "\n\n## Demos [use read_demo_source tool with metaUrl]\n" +
+                            demoMetaurls.map((url: string) => `- ${url}`).join('\n');
+                    }
+                }
+            } catch {
+                // page-data.json unavailable; fall through to HTML scraping
             }
-            
-            if (!articleHtml) {
-                return { content: [{ type: "text", text: "Error: Could not find the main content of the article." }], isError: true };
+
+            // Fallback: Traditional HTML scraping with cheerio
+            if (!markdown) {
+                const html = await fetchHtml(targetUrl);
+                const $ = cheerio.load(html);
+
+                $("nav, header, footer, aside, .kd-sidebar, .page-toc, #TableOfContents, .toc-container, .feedback-panel, .edit-page, script, style, noscript, svg").remove();
+
+                let articleHtml = $("article").html() || $("main").html() || $(".kd-article").html() || $(".markdown-section").html();
+                if (!articleHtml) articleHtml = $("body").html();
+
+                if (!articleHtml) {
+                    return { content: [{ type: "text", text: "Error: Could not find the main content of the article." }], isError: true };
+                }
+
+                markdown = turndownService.turndown(articleHtml);
             }
-            
-            const markdown = turndownService.turndown(articleHtml);
-            
+
             return {
-                content: [
-                    {
-                        type: "text",
-                        text: `# Documentation extracted from: ${targetUrl}\n\n${markdown}`,
-                    },
-                ],
+                content: [{
+                    type: "text",
+                    text: `# Documentation extracted from: ${targetUrl}\n\n${markdown}${demoSection}`,
+                }],
+            };
+        } catch (error: any) {
+            return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
+        }
+    }
+);
+
+server.tool(
+    "read_demo_source",
+    "Fetches the source code files for a specific Kendo UI demo example. Use the metaUrl values listed in the 'Demos' section of read_kendo_doc output.",
+    {
+        metaUrl: z.string().describe("The demo metaurl path (e.g., 'grid/data-operations/directive/filtering/'). Obtained from read_kendo_doc output.")
+    },
+    async ({ metaUrl }) => {
+        try {
+            const cleanUrl = metaUrl.replace(/^\//, '').replace(/\/$/, '');
+            const demoJsonUrl = `${DEMOS_BASE_URL}/${cleanUrl}/demo.json`;
+
+            const demoJsonRaw = await fetchHtml(demoJsonUrl);
+            const demoData = JSON.parse(demoJsonRaw);
+
+            const files = demoData?.source?.files;
+            if (!files || files.length === 0) {
+                return { content: [{ type: "text", text: "No source files found for this demo." }] };
+            }
+
+            // Fetch all source files in parallel
+            const fileContents = await Promise.all(
+                files.map(async (file: any) => {
+                    try {
+                        const contentUrl = `${DEMOS_BASE_URL}/${file.contentUrl}`;
+                        const content = await fetchHtml(contentUrl);
+                        return `=== ${file.name} ===\n${content}`;
+                    } catch {
+                        return `=== ${file.name} ===\n[Error fetching file]`;
+                    }
+                })
+            );
+
+            return {
+                content: [{
+                    type: "text",
+                    text: fileContents.join('\n\n'),
+                }],
             };
         } catch (error: any) {
             return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
